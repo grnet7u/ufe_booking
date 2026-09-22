@@ -695,7 +695,7 @@ function viewLogin(){
       ${tabs}
       <div><h2>${reg?"Шинээр бүртгүүлэх":"UFE и-мэйлээрээ нэвтэрнэ үү"}</h2></div>
       <div class="field"><label for="l-user">Нэвтрэх нэр (UFE и-мэйл)</label>
-        <div class="suffix"><input class="input mono" id="l-user" name="user" required maxlength="60" autocomplete="username" value="${h(L.user)}" placeholder="b22fa1260"><span>@${CFG.emailDomain}</span></div></div>
+        <div class="suffix"><input class="input mono" id="l-user" name="user" required maxlength="60" autocomplete="username" value="${h(L.user)}" placeholder="b00fa0000"><span>@${CFG.emailDomain}</span></div></div>
       ${reg?`<div class="field"><label for="l-name">Нэр</label><input class="input" id="l-name" name="name" maxlength="60" autocomplete="name"></div>
       <div class="field"><label for="l-sid">Оюутны код (заавал биш)</label><input class="input mono" id="l-sid" name="studentId" maxlength="20"></div>`:""}
       <div class="field"><label for="l-pw">Нууц үг</label><input class="input" id="l-pw" name="password" type="password" autocomplete="${reg?"new-password":"current-password"}" minlength="6" maxlength="72"></div>
