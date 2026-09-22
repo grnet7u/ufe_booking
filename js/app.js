@@ -514,7 +514,7 @@ function viewRooms(){
     <aside class="side card pad"><div class="eyebrow" style="margin-bottom:10px">Давхраар шүүх</div>
       <button type="button" class="floor bookable ${q.floor==="all"?"sel":""}" data-floor="all" style="margin-bottom:6px"><span class="fn">★</span><span>Бүх давхар</span><span class="small">45</span></button>
       ${floorStack({sel:q.floor})}
-      <p class="note" style="margin-top:12px">2-р давхрын IT лабын захиалгын дүрэм тодорхойлогдоогүй тул одоогоор захиалах боломжгүй.</p>
+      
     </aside>
     <section style="min-width:0">
       <form class="card pad" id="roomForm" style="margin-bottom:12px">
