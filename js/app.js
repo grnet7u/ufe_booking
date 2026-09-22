@@ -89,7 +89,7 @@ function resSub(s){
    localStorage-д зөвхөн сүүлд нэвтэрсэн и-мэйл (session заагч) ба өнгөний горим хадгалагдана. */
 const S={mode:"loading",isAdmin:false,acct:null,email:null,profile:null,prefs:{read:[]},slots:[],sched:null,
   q:null,lib:null,libSel:null,roomSel:null,detail:null,modal:null,panel:false,toast:null,busy:false,theme:"light",importMsg:null,
-  login:{step:"email",email:"",err:null}};
+  login:{mode:"in",user:"",err:null,busy:false},pendingProfile:null};
 try{const t=localStorage.getItem("ufe.theme");if(t==="light"||t==="dark")S.theme=t;}catch(e){}
 function applyTheme(){if(document.documentElement.getAttribute("data-theme")!==S.theme)document.documentElement.setAttribute("data-theme",S.theme);}
 applyTheme();
@@ -158,8 +158,10 @@ function supabaseStore(sb){
     },
     async session(){const {data}=await sb.auth.getSession();const u=data&&data.session&&data.session.user;return u?{id:u.id,email:(u.email||"").toLowerCase()}:null;},
     onAuth(cb){sb.auth.onAuthStateChange((ev,sess)=>{const u=sess&&sess.user;cb(u?{id:u.id,email:(u.email||"").toLowerCase()}:null,ev);});},
-    async sendCode(email){const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname,shouldCreateUser:true}});if(error)throw error;return {sent:true};},
-    async verifyCode(email,token){const {data,error}=await sb.auth.verifyOtp({email,token,type:"email"});if(error)throw error;const u=data.user;return {id:u.id,email:(u.email||"").toLowerCase()};},
+    async signIn(email,password){const {data,error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;const u=data.user;return {id:u.id,email:(u.email||"").toLowerCase()};},
+    async signUp(email,password){const {data,error}=await sb.auth.signUp({email,password});if(error)throw error;
+      if(!data.session)throw new Error("CONFIRM_EMAIL_ON");const u=data.user;return {id:u.id,email:(u.email||"").toLowerCase()};},
+    async changePassword(password){const {error}=await sb.auth.updateUser({password});if(error)throw error;},
     async logout(){await sb.auth.signOut();},
     /* нэвтэрсэн хэрэглэгчийн мэдээлэл */
     async loadUser(u){
@@ -199,7 +201,7 @@ function supabaseStore(sb){
 }
 
 function memStore(){
-  const d0=today(),d1=addDays(d0,1),prof={},pref={};let cur=null;const authCbs=[];
+  const d0=today(),d1=addDays(d0,1),prof={},pref={},accts={};let cur=null;const authCbs=[];
   const mk=(r,d,a,b,t,extra)=>Object.assign({resourceType:t,resourceId:r,date:d,start:a,end:b},extra||{});
   const seed=[];
   [["R-1301",[1,2,3,4,7,8,15,21]],["R-1305",[5,6,11,12,13]],["R-608",[...Array(26)].map((_,i)=>i+1)]].forEach(([r,ns])=>ns.forEach(n=>{const p=Math.max(0,nextPeriod(d0));seed.push(mk(cseatId(r,n),d0,P[p].start,P[p].end,"CLASSROOM_SEAT",{roomId:r,seatN:n}));}));
@@ -208,8 +210,9 @@ function memStore(){
   const api={
     async init(){S.sched=window.DEMO_SCHEDULE||null;},
     async session(){return cur;},onAuth(cb){authCbs.push(cb);},
-    async sendCode(email){return {sent:true,demo:true};},
-    async verifyCode(email){cur={id:"demo:"+email,email};return cur;},
+    async signIn(email,password){const a=accts[email];if(!a||a!==password)throw new Error("Invalid login credentials");cur={id:"demo:"+email,email};return cur;},
+    async signUp(email,password){if(accts[email])throw new Error("User already registered");accts[email]=password;cur={id:"demo:"+email,email};return cur;},
+    async changePassword(){},
     async logout(){cur=null;},
     async loadUser(u){S.isAdmin=true;return {profile:prof[u.id]||null,prefs:{read:pref[u.id]||[]}};},
     async saveProfile(p){prof[S.acct]=p;},async savePrefs(read){pref[S.acct]=read;},async saveSchedule(d){S.sched=d;},
@@ -229,9 +232,11 @@ function memStore(){
 async function setUser(u){
   S.libSel=null;S.roomSel=null;S.modal=null;S.panel=false;S.detail=null;S.slots=[];
   if(!u){S.acct=null;S.email=null;S.profile=null;S.prefs={read:[]};S.isAdmin=false;store.stopLive();render();return;}
-  if(!u.email.endsWith("@"+CFG.emailDomain)){await store.logout();S.login={step:"email",email:"",err:"Зөвхөн @"+CFG.emailDomain+" хаягаар нэвтэрнэ."};return setUser(null);}
+  if(!u.email.endsWith("@"+CFG.emailDomain)){await store.logout();S.login={mode:"in",user:"",err:"Зөвхөн @"+CFG.emailDomain+" хаягаар нэвтэрнэ."};return setUser(null);}
   S.acct=u.id;S.email=u.email;
   const r=await store.loadUser(u);S.profile=r.profile;S.prefs=r.prefs;
+  if(!S.profile&&S.pendingProfile){try{await store.saveProfile(S.pendingProfile);S.profile=S.pendingProfile;}catch(e){console.warn(e);}}
+  S.pendingProfile=null;
   await store.refresh();store.startLive();render();
 }
 async function boot(){
@@ -652,6 +657,10 @@ function viewProfile(){
       <div class="small muted">Бүртгүүлсэн: ${p.createdAt?fmtWhen(p.createdAt):"—"}</div>
       <button class="btn" type="submit">Хадгалах</button>
     </form>
+    <form class="card pad grid" id="pwForm" style="gap:12px" novalidate><h2>Нууц үг солих</h2>
+      <div class="field"><label for="pw-a">Шинэ нууц үг</label><input class="input" id="pw-a" name="pw" type="password" autocomplete="new-password" maxlength="72"></div>
+      <div class="field"><label for="pw-b">Давтах</label><input class="input" id="pw-b" name="pw2" type="password" autocomplete="new-password" maxlength="72"></div>
+      <button class="btn ghost" type="submit">Нууц үг солих</button></form>
     ${S.isAdmin?`<div class="card pad grid" style="gap:12px"><h2>Хичээлийн хуваарь</h2>${schedNote()}
       <p class="small muted">schedule.xlsx загвараар (Даваа–Ням, I–XII цаг) бөглөсөн файлаа оруулна. Нүд бүрийн "C - C706" хэлбэрийн өрөө, "10:40-13:30" цагийг уншиж тухайн анги хичээлтэй цагийг тооцно. Онлайн болон өөр байрны хичээлийг алгасна.</p>
       <label class="btn ghost" for="sched-file" style="cursor:pointer">Excel файл сонгох (.xlsx)</label><input id="sched-file" type="file" accept=".xlsx,.xls" hidden>
@@ -679,23 +688,21 @@ function viewProfile(){
 }
 
 function viewLogin(){
-  const L=S.login,demo=S.mode==="memory";
-  const form=L.step==="code"?`
-    <form class="login-form" id="codeForm" novalidate>
-      <div><div class="eyebrow">Нэвтрэх · 2/2</div><h2 style="margin-top:6px">И-мэйлээ шалгана уу</h2></div>
-      <p class="muted"><b class="mono">${h(L.email)}</b> хаяг руу нэвтрэх код болон холбоос илгээлээ. Холбоос дээр дарах эсвэл кодоо энд оруулна уу.</p>
-      <div class="field"><label for="l-code">Нэвтрэх код</label><input class="input mono" id="l-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" style="font-size:20px;letter-spacing:.2em"></div>
-      ${L.err?`<p class="err">${h(L.err)}</p>`:""}
-      <button class="btn block" type="submit">Нэвтрэх</button>
-      <button class="btn ghost block" type="button" data-login-back>Өөр и-мэйл ашиглах</button>
-    </form>`:`
-    <form class="login-form" id="loginForm" novalidate>
-      <div><div class="eyebrow">Нэвтрэх</div><h2 style="margin-top:6px">UFE и-мэйлээрээ нэвтэрнэ үү</h2></div>
-      <div class="field"><label for="l-user">Нэвтрэх нэр (и-мэйл)</label>
-        <div class="suffix"><input class="input mono" id="l-user" name="user" required maxlength="60" autocomplete="username" value="${h((L.email||"").split("@")[0])}" placeholder="bold.b"><span>@${CFG.emailDomain}</span></div></div>
-      ${L.err?`<p class="err">${h(L.err)}</p>`:""}
-      <button class="btn block" type="submit">${demo?"Нэвтрэх (туршилт)":"Нэвтрэх код авах"}</button>
-      <p class="note">Зөвхөн <b>@${CFG.emailDomain}</b> хаягаар нэвтэрнэ. ${demo?"Туршилтын горимд код шаардахгүй.":"Нууц үг шаардлагагүй — таны UFE и-мэйл рүү нэг удаагийн код ирнэ."} Захиалга бүр таны бүртгэлд холбогдож хадгалагдана.</p>
+  const L=S.login,reg=L.mode==="up",demo=S.mode==="memory";
+  const tabs=`<nav class="tabs" style="align-self:flex-start"><a href="#" data-auth-mode="in" class="${reg?"":"on"}">Нэвтрэх</a><a href="#" data-auth-mode="up" class="${reg?"on":""}">Бүртгүүлэх</a></nav>`;
+  const form=`
+    <form class="login-form" id="authForm" novalidate>
+      ${tabs}
+      <div><h2>${reg?"Шинээр бүртгүүлэх":"UFE и-мэйлээрээ нэвтэрнэ үү"}</h2></div>
+      <div class="field"><label for="l-user">Нэвтрэх нэр (UFE и-мэйл)</label>
+        <div class="suffix"><input class="input mono" id="l-user" name="user" required maxlength="60" autocomplete="username" value="${h(L.user)}" placeholder="b22fa1260"><span>@${CFG.emailDomain}</span></div></div>
+      ${reg?`<div class="field"><label for="l-name">Нэр</label><input class="input" id="l-name" name="name" maxlength="60" autocomplete="name"></div>
+      <div class="field"><label for="l-sid">Оюутны код (заавал биш)</label><input class="input mono" id="l-sid" name="studentId" maxlength="20"></div>`:""}
+      <div class="field"><label for="l-pw">Нууц үг</label><input class="input" id="l-pw" name="password" type="password" autocomplete="${reg?"new-password":"current-password"}" minlength="6" maxlength="72"></div>
+      ${reg?`<div class="field"><label for="l-pw2">Нууц үг давтах</label><input class="input" id="l-pw2" name="password2" type="password" autocomplete="new-password" maxlength="72"></div>`:""}
+      <p class="err" id="authErr" ${L.err?"":"hidden"}>${h(L.err||"")}</p>
+      <button class="btn block" type="submit">${reg?"Бүртгүүлэх":"Нэвтрэх"}</button>
+      <p class="note">Зөвхөн <b>@${CFG.emailDomain}</b> хаягаар бүртгүүлнэ. ${reg?"Нууц үг хамгийн багадаа 6 тэмдэгт.":"Бүртгэлгүй бол <b>Бүртгүүлэх</b> хэсгээр нэг удаа бүртгүүлнэ."}${demo?" (Туршилтын горим — өгөгдөл хадгалагдахгүй.)":""} Нууц үгээ мартвал сургуулийн админд хандана уу.</p>
     </form>`;
   return `<div class="login-wrap"><div class="login-theme">${themeBtn("plain")}</div><div class="card login">
     <div class="login-art"><div><div class="brand-mark">UFE</div>
@@ -762,7 +769,7 @@ function render(){
 /* ============ Events ============ */
 function cseatDraft(roomId,n,date,sp,ep){return {resourceType:"CLASSROOM_SEAT",resourceId:cseatId(roomId,n),roomId,seatN:n,date,start:P[sp].start,end:P[ep].end};}
 document.addEventListener("click",e=>{
-  const t=e.target.closest("[data-floor],[data-enter],[data-cseat],[data-bookcseat],[data-cell],[data-pick],[data-seat],[data-hour],[data-booklib],[data-close],[data-confirm],[data-askcancel],[data-docancel],[data-checkin],[data-bell],[data-readall],[data-logout],[data-login-back],[data-dday],[data-theme-toggle],[data-scrim]");
+  const t=e.target.closest("[data-floor],[data-enter],[data-cseat],[data-bookcseat],[data-cell],[data-pick],[data-seat],[data-hour],[data-booklib],[data-close],[data-confirm],[data-askcancel],[data-docancel],[data-checkin],[data-bell],[data-readall],[data-logout],[data-auth-mode],[data-dday],[data-theme-toggle],[data-scrim]");
   if(S.panel&&!e.target.closest(".panel")&&!e.target.closest("[data-bell]")){S.panel=false;render();}
   if(!t)return;const d=t.dataset;
   if(d.scrim!==undefined){if(e.target===t&&!S.busy){S.modal=null;render();}return;}
@@ -783,8 +790,8 @@ document.addEventListener("click",e=>{
   if(d.checkin){checkIn(d.checkin);return;}
   if(d.bell!==undefined){S.panel=!S.panel;render();if(S.panel)setTimeout(markAllRead,1500);return;}
   if(d.readall!==undefined){markAllRead();return;}
-  if(d.logout!==undefined){(async()=>{try{await store.logout();}catch(x){}S.login={step:"email",email:"",err:null};await setUser(null);location.hash="#/";})();return;}
-  if(d.loginBack!==undefined){S.login={step:"email",email:S.login.email,err:null};render();return;}
+  if(d.logout!==undefined){(async()=>{try{await store.logout();}catch(x){}S.login={mode:"in",user:"",err:null,busy:false};await setUser(null);location.hash="#/";})();return;}
+  if(d.authMode){e.preventDefault();S.login={mode:d.authMode,user:S.login.user,err:null,busy:false};render();return;}
   if(d.dday){S.detail.date=d.dday;S.roomSel=null;const i=nextPeriod(d.dday);if(i>S.detail.sp){S.detail.sp=Math.max(0,i);S.detail.ep=Math.max(S.detail.ep,S.detail.sp);}render();return;}
 });
 document.addEventListener("change",e=>{
@@ -799,23 +806,38 @@ document.addEventListener("input",e=>{if(e.target.id==="q-cap")S.q.cap=e.target.
 document.addEventListener("submit",async e=>{
   const f=e.target;e.preventDefault();
   if(f.id==="roomForm"){S.q.cap=f.cap.value.replace(/[^0-9]/g,"");render();return;}
-  if(f.id==="loginForm"){
-    let u=f.user.value.trim().toLowerCase();if(u.includes("@")){const [a,dom]=u.split("@");if(dom!==CFG.emailDomain){S.login.err="Зөвхөн @"+CFG.emailDomain+" хаягаар нэвтэрнэ.";render();return;}u=a;}
-    if(!/^[a-z0-9][a-z0-9._-]{1,40}$/.test(u)){S.login.err="Нэвтрэх нэр буруу байна. Жишээ: bold.b@"+CFG.emailDomain;render();return;}
-    const email=u+"@"+CFG.emailDomain;f.querySelector("button[type=submit]").disabled=true;
-    try{const r=await store.sendCode(email);
-      if(r.demo){const usr=await store.verifyCode(email);await setUser(usr);location.hash="#/";return;}
-      S.login={step:"code",email,err:null};}
-    catch(x){S.login={step:"email",email,err:/rate|limit/i.test(String(x.message))?"Хэт олон удаа оролдлоо. Хэдэн минутын дараа дахин оролдоно уу.":"Код илгээж чадсангүй: "+(x.message||"алдаа")};}
-    render();return;
-  }
-  if(f.id==="codeForm"){
-    const code=f.code.value.replace(/\s/g,"");if(!/^\d{6,10}$/.test(code)){S.login.err="Кодоо зөв оруулна уу.";render();return;}
-    f.querySelector("button[type=submit]").disabled=true;
-    try{const usr=await store.verifyCode(S.login.email,code);S.login={step:"email",email:"",err:null};await setUser(usr);location.hash="#/";}
-    catch(x){S.login.err="Код буруу эсвэл хугацаа нь дууссан байна.";render();}
+  if(f.id==="authForm"){
+    const L=S.login,reg=L.mode==="up";
+    let u=f.user.value.trim().toLowerCase();L.user=u.split("@")[0];
+    const btn=f.querySelector("button[type=submit]"),errEl=f.querySelector("#authErr"),label=btn.textContent;
+    const fail=t=>{errEl.textContent=t;errEl.hidden=false;btn.disabled=false;btn.textContent=label;};
+    if(u.includes("@")){const [a,dom]=u.split("@");if(dom!==CFG.emailDomain)return fail("Зөвхөн @"+CFG.emailDomain+" хаягаар нэвтэрнэ.");u=a;}
+    if(!/^[a-z0-9][a-z0-9._-]{1,40}$/.test(u))return fail("Нэвтрэх нэр буруу байна. Жишээ: b22fa1260@"+CFG.emailDomain);
+    const email=u+"@"+CFG.emailDomain,pw=f.password.value;
+    if(pw.length<6)return fail("Нууц үг хамгийн багадаа 6 тэмдэгт байна.");
+    if(reg){
+      const name=f.name.value.trim(),sid=f.studentId.value.trim().toUpperCase();
+      if(!name)return fail("Нэрээ оруулна уу.");
+      if(sid&&!/^[A-Z0-9-]{4,20}$/.test(sid))return fail("Оюутны код 4–20 тэмдэгт (латин үсэг, тоо) байна.");
+      if(pw!==f.password2.value)return fail("Нууц үг таарахгүй байна.");
+      S.pendingProfile={name,studentId:sid,createdAt:Date.now()};
+    }
+    errEl.hidden=true;btn.disabled=true;btn.textContent="Түр хүлээнэ үү…";
+    try{const usr=reg?await store.signUp(email,pw):await store.signIn(email,pw);
+      S.login={mode:"in",user:"",err:null,busy:false};await setUser(usr);location.hash="#/";}
+    catch(x){S.pendingProfile=null;const m=String(x&&x.message||"");
+      fail(/Invalid login credentials/i.test(m)?"И-мэйл эсвэл нууц үг буруу байна.":
+           /already registered|already exists/i.test(m)?"Энэ и-мэйл бүртгэлтэй байна. \"Нэвтрэх\" хэсгээр орно уу.":
+           /CONFIRM_EMAIL_ON|not confirmed/i.test(m)?"Бүртгэл үүссэн ч и-мэйл баталгаажуулалт асаалттай байна. Supabase → Sign In / Providers → Email → \"Confirm email\"-ийг унтраана уу.":
+           /Database error|ufe\.edu\.mn/i.test(m)?"Зөвхөн @"+CFG.emailDomain+" хаягаар бүртгүүлнэ.":
+           /rate|limit|too many/i.test(m)?"Хэт олон оролдлого. Түр хүлээгээд дахин оролдоно уу.":
+           /password/i.test(m)?"Нууц үг хэт сул байна. Илүү урт нууц үг сонгоно уу.":
+           "Алдаа гарлаа: "+m);}
     return;
   }
+  if(f.id==="pwForm"){const a=f.pw.value,b=f.pw2.value;
+    if(a.length<6){toast("Нууц үг хамгийн багадаа 6 тэмдэгт.");return;}if(a!==b){toast("Нууц үг таарахгүй байна.");return;}
+    try{await store.changePassword(a);f.reset();toast("Нууц үг солигдлоо.");}catch(x){toast("Солиж чадсангүй: "+(x.message||""));}return;}
   if(f.id==="setupForm"){
     const name=f.name.value.trim(),sid=f.studentId.value.trim().toUpperCase(),el=f.querySelector("#setupErr");
     if(!name){el.textContent="Нэрээ оруулна уу.";el.hidden=false;return;}
