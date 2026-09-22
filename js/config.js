@@ -12,6 +12,6 @@
  * Leave both empty to run the site in demo mode (nothing is saved).
  */
 window.UFE_CONFIG = {
-  SUPABASE_URL: "//qriziflwzekcceizbsvm.supabase.co",
+  SUPABASE_URL: "https://qriziflwzekcceizbsvm.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_CiaTmI1u1RzIe-4eVvdTQg_MbFJ-oyP"
 };
