@@ -1,6 +1,8 @@
 -- Fall 2026 schedule parsed from "negdsen huvaari namar.xlsx"
 -- (470 in-person classes in bookable C-building rooms).
 -- Run after schema.sql. Replace the e-mail below with the schedule admin's UFE e-mail.
+-- (Schedule admins are NOT teachers. To make someone a teacher, create their login in
+--  Authentication → Users, then run:  select public.grant_teacher('name@ufe.edu.mn', 'Нэр');)
 
 insert into public.app_admins (email) values ('b22fa1254@ufe.edu.mn')
 on conflict do nothing;
